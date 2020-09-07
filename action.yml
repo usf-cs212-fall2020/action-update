@@ -1,0 +1,99 @@
+# see: https://docs.github.com/en/actions/creating-actions/creating-a-composite-run-steps-action
+# see: https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions#runs-for-composite-run-steps-actions
+# see: https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions#inputs
+# see: https://github.com/actions/runner/issues/646
+
+# actions cannot update their own workflows
+# education plans cannot use templates in private repos
+# inputs must be accessed as ${{ inputs.inputName }} not ${INPUT_INPUTNAME}
+# must call exit 1 on error, echo ::error does not seem to do that in composite run
+
+# this action will report failure if the action in question is out of date
+# used to force the user to manually update their workflow
+
+name: 'Check for Action Update'
+description: 'Github Action to test whether an action requires an update.'
+
+inputs:
+  file:
+    description: 'The action workflow file being checked.'
+    required: true
+
+  path:
+    description: 'The path to the current workflow template file (without the file name).'
+    required: true
+    default: '.github/workflows'
+
+  template_path:
+    description: 'The path to the primary workflow template file (without the file name).'
+    required: true
+    default: 'workflow-templates'
+
+  template_repo:
+    description: 'The workflow template repository for this organization.'
+    required: true
+    default: '${{ github.repository_owner }}/.github'
+
+outputs:
+  action_file:
+    description: "Path to the latest version of the action workflow."
+    value: ${{ steps.compare-action-files.outputs.action_file }}
+
+runs:
+  using: "composite"
+  steps:
+    # create a temporary folder for the action files
+    - name: Make Temporary Directory
+      id: make-temp-dir
+      shell: bash
+      run: |
+        ACTION_DIR=$(mktemp -d ~/action-XXXX)
+        echo "Created temporary directory ${ACTION_DIR}..."
+        echo "::set-env name=ACTION_DIR::${ACTION_DIR}"
+
+    # the version of the action in the checked out reference may not be the version being run
+    # check out the latest from the current repository
+    - name: Checkout Current Workflow
+      id: checkout-current
+      shell: bash
+      working-directory: ${{ env.ACTION_DIR }}
+      run: |
+        LOCAL_PATH="current"
+        echo "Cloning ${GITHUB_REPOSITORY} to ${LOCAL_PATH}..."
+        git clone --depth 1 --no-tags https://github-actions:${{ github.token }}@github.com/${GITHUB_REPOSITORY} ${LOCAL_PATH}
+
+    # checkout the template workflow
+    - name: Checkout Template Workflow
+      id: checkout-template
+      shell: bash
+      working-directory: ${{ env.ACTION_DIR }}
+      run: |
+        LOCAL_PATH="template"
+        echo "Cloning ${{ inputs.template_repo }} to ${LOCAL_PATH}..."
+        git clone --depth 1 --no-tags https://github.com/${{ inputs.template_repo }} ${LOCAL_PATH}
+
+    # compare the workflow files
+    - name: Compare Action Files
+      id: compare-action-files
+      shell: bash
+      working-directory: ${{ env.ACTION_DIR }}
+      run: |
+        echo "Listing files..."
+        ls -aCG current/${{ inputs.path }}
+        ls -aCG template/${{ inputs.template_path }}
+
+        PATH1="current/${{ inputs.path }}/${{ inputs.file }}"
+        PATH2="template/${{ inputs.template_path }}/${{ inputs.file }}"
+        echo "Comparing ${PATH1} and ${PATH2}..."
+
+        NEW_FILE="${{ env.ACTION_DIR }}/${PATH2}"
+        echo "::set-output name=action_file::${NEW_FILE}"
+
+        if cmp -s "${PATH1}" "${PATH2}"; then
+          echo "No changes to action detected."
+          exit 0
+        fi
+
+        echo "Updated file at: ${NEW_FILE}"
+        echo "::error ::Your Github Action ${{ inputs.file }} is out of date. Go to ${{ inputs.template_repo }} for the latest version."
+        exit 1
