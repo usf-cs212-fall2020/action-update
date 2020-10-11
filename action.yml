@@ -49,7 +49,7 @@ runs:
       run: |
         ACTION_DIR=$(mktemp -d ~/action-XXXX)
         echo "Created temporary directory ${ACTION_DIR}..."
-        echo "::set-env name=ACTION_DIR::${ACTION_DIR}"
+        echo "ACTION_DIR=${ACTION_DIR}" >> $GITHUB_ENV
 
     # the version of the action in the checked out reference may not be the version being run
     # check out the latest from the current repository
